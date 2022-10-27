@@ -244,29 +244,37 @@ class Websocket implements ProtocolInterface
     public static function handshake($recv_buffer, TcpConnection $connection)
     {
         $request      = new Request($recv_buffer);// 自动解析请求数据
+        $response     = new Response();
         $headerLength = strlen($request->headerRaw) + 4;// 4代表\r\n\r\n
-        $secKey       = $request->headers['Sec-WebSocket-Key'];
-        $guid         = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+        $secKey       = $request->headers['Sec-WebSocket-Key'] ?? null;
+        if (!$secKey) {
+            $response->statusCode(403);
+            $response->header('Content-Type: text/html;charset=utf-8');
+            $response->body("<h1><center>403</center></h1><hr/><center><h4>Socketman</h4></center>");
+            $connection->close($response, true);
+            return 0;
+        }
+        $guid = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
         // 固定公式：将Sec-WebSocket-Key跟258EAFA5-E914-47DA-95CA-C5AB0DC85B11拼接
         // 再通过SHA1计算出摘要，并转成base64字符串。
-        $secAccept    = base64_encode(sha1($secKey . $guid));
+        $secAccept = base64_encode(sha1($secKey . $guid, true));
         // 将握手数据剪辑掉
         $connection->cutRecvBuffer($headerLength);
-        $upgrade = new Response();
         // 协议规定要响应给客户端的状态码&请求头
-        $upgrade->statusCode(101);
-        $upgrade->header('Upgrade', 'websocket');
-        $upgrade->header('Sec-WebSocket-Version', 13);
-        $upgrade->header('Connection', 'Upgrade');
-        $upgrade->header('Sec-WebSocket-Accept', $secAccept);
-        $connection->send($upgrade, true);// 向客户端应答握手信息
+        $response->statusCode(101);
+        $response->header('Upgrade', 'websocket');
+        $response->header('Sec-WebSocket-Version', 13);
+        $response->header('Connection', 'Upgrade');
+        //$response->header('Origin', $request->headers['Origin']);
+        $response->header('Sec-WebSocket-Accept', $secAccept);
+        $connection->send($response, true);// 向客户端应答握手信息
         // 初始化部分属性
         $connection->websocketHandshake          = true;// 是否已握手
         $connection->websocketDataBuffer         = '';// 资源流buffer解码后的客户端数据
         $connection->websocketCurrentFrameLength = 0;// 当前帧的数据长度
         $connection->websocketRespFirstByte      = 0x81;// 默认声明为文本帧 10000001
         if (isset($connection->onWebsocketConnect)) {// 回调用户事件
-            call_user_func_array($connection->onWebsocketConnect, [$connection]);
+            call_user_func_array($connection->onWebsocketConnect, [$connection, $request]);
         }
         return 0;// 通知系统继续接收数据包
     }
